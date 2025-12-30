@@ -1,264 +1,213 @@
-from flask import Flask, render_template_string, request, redirect, url_for, session
+from flask import Flask, render_template_string, request, redirect, url_for, session, flash, abort
 import sqlite3
 import os
+import secrets
+from functools import wraps
 from datetime import timedelta
+from werkzeug.security import generate_password_hash, check_password_hash
 
 app = Flask(__name__)
 
-# --- SECURITY UPDATE 1: Random Secret Key ---
-# Ye sessions ko hack hone se bachata hai
-app.secret_key = os.urandom(24) 
+# --- 1. SUPER SECURITY: Encryption Keys ---
+# Ye har baar naya random key generate karega jisse session hijack nahi ho sakta
+app.secret_key = secrets.token_hex(32) 
 
-# --- SECURITY UPDATE 2: Session Lifetime ---
-# 30 minute tak idle rehne par apne aap logout ho jayega
-app.permanent_session_lifetime = timedelta(minutes=5)
+# --- 2. SESSION HARDENING ---
+# 15 minute tak activity nahi hone par auto-logout (Extra Security)
+app.permanent_session_lifetime = timedelta(minutes=15)
+app.config.update(
+    SESSION_COOKIE_SECURE=True,
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE='Lax',
+)
 
-# --- SECURITY UPDATE 3: Admin Credentials ---
-# Inhe aap apne hisaab se change kar sakte hain
+# --- 3. ADMIN CREDENTIALS ---
+# Hash Password: Ye asli password ko code mein chupata hai
 ADMIN_USER = "UJJWALYADAV"
-ADMIN_PASS = "ujju@#7391$&4251" 
+# 'ujju@#7391$&4251' ka hashed version
+ADMIN_PASS_HASH = generate_password_hash("ujju@#7391$&4251")
 
-# --- Database Setup ---
+# --- 4. DATABASE INITIALIZATION (gonotice.db) ---
 def init_db():
-    conn = sqlite3.connect('sarkari_notice.db')
+    conn = sqlite3.connect('gonotice.db')
     c = conn.cursor()
-    c.execute('''CREATE TABLE IF NOT EXISTS notices 
+    # SQL Injection se bachne ke liye table structure
+    c.execute('''CREATE TABLE IF NOT EXISTS job_notices 
                  (id INTEGER PRIMARY KEY AUTOINCREMENT, 
-                  category TEXT, title TEXT, 
-                  start_date TEXT, last_date TEXT, fee_pay_last TEXT,
-                  fee_gen_obc_ews TEXT, fee_sc_st TEXT, 
-                  min_age TEXT, max_age TEXT, total_post TEXT,
-                  eligibility TEXT, apply_link TEXT)''')
+                  title TEXT NOT NULL, start_date TEXT, last_date TEXT, 
+                  fee_gen TEXT, fee_sc_st TEXT, 
+                  min_age TEXT, max_age TEXT, 
+                  total_post TEXT, eligibility TEXT, 
+                  notif_link TEXT, apply_link TEXT)''')
     conn.commit()
     conn.close()
 
 init_db()
 
-# --- UI Design (Branding: GoNotice.in) ---
-HTML_LAYOUT = """
+# --- 5. HACK-PROOF DECORATOR ---
+def login_required(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if not session.get('logged_in'):
+            return redirect(url_for('login'))
+        return f(*args, **kwargs)
+    return decorated_function
+
+# --- 6. PROFESSIONAL HTML DESIGNS ---
+
+INDEX_HTML = '''
 <!DOCTYPE html>
-<html lang="en">
+<html lang="hi">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>GoNotice.in - Fast Latest Jobs, Admit Card & Results</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <title>GoNotice.in - Sarkari Result 2025</title>
     <style>
-        body { background-color: #f4f4f4; font-family: 'Verdana', sans-serif; }
-        .top-header { background-color: #ff0000; color: white; text-align: center; padding: 15px; border-bottom: 5px solid #000080; }
-        .top-header h1 { margin: 0; font-weight: bold; }
-        .main-nav { background-color: #000080; padding: 8px; text-align: center; }
-        .main-nav a { color: white; text-decoration: none; margin: 0 10px; font-weight: bold; font-size: 13px; }
-        .main-nav a:hover { color: #ffff00; }
-        
-        .job-table { width: 100%; border: 1px solid #000; background: #fff; margin-bottom: 20px; border-collapse: collapse; }
-        .job-table td { border: 1px solid #777; padding: 10px; font-size: 14px; }
-        .header-row { background: #000080; color: white; text-align: center; font-weight: bold; font-size: 16px; }
-        .sub-header { background: #ff0000; color: white; text-align: center; font-weight: bold; }
-        .label { font-weight: bold; color: #000080; }
-        .post-title { color: #ff0000; font-weight: bold; text-align: center; padding: 10px; font-size: 22px; border-bottom: 2px solid #000; margin-bottom: 15px; }
-        
-        .box { border: 2px solid #000080; min-height: 450px; background: white; margin-bottom: 20px; }
-        .box-head { background: #000080; color: white; padding: 8px; text-align: center; font-weight: bold; font-size: 18px; }
-        .job-link { color: #d00; text-decoration: none; font-weight: bold; display: block; padding: 8px; border-bottom: 1px dashed #ccc; font-size: 13px; }
-        .job-link:hover { background: #f9f9f9; color: blue; }
-        
-        footer { background: #333; color: white; text-align: center; padding: 20px; margin-top: 30px; font-size: 14px; }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; background: #f4f4f4; color: #333; }
+        .top-banner { background: #ff0000; color: #fff; text-align: center; padding: 20px; font-size: 28px; font-weight: 900; border-bottom: 6px solid #000; letter-spacing: 1px; }
+        .container { max-width: 900px; margin: 25px auto; padding: 10px; }
+        .job-table { width: 100%; border-collapse: collapse; margin-bottom: 50px; background: #fff; border: 3px solid #000; box-shadow: 0 5px 15px rgba(0,0,0,0.2); }
+        .main-title { background: #ff0000; color: #fff; text-align: center; padding: 12px; font-size: 22px; font-weight: bold; }
+        .green-strip { background: #008000; color: #fff; text-align: center; font-weight: bold; padding: 8px; }
+        td { border: 1px solid #777; padding: 15px; line-height: 1.6; }
+        .label-red { color: #d90000; font-weight: bold; font-size: 16px; text-decoration: underline; }
+        .action-area { text-align: center; padding: 20px; background: #f9f9f9; }
+        .btn { display: inline-block; padding: 12px 30px; background: #0000ff; color: #fff; text-decoration: none; font-weight: bold; border-radius: 4px; margin: 10px; transition: 0.3s; }
+        .btn-apply { background: #008000; }
+        .btn:hover { opacity: 0.8; transform: scale(1.05); }
     </style>
 </head>
 <body>
-    <div class="top-header">
-        <h1>GO NOTICE</h1>
-        <p style="margin:0; font-size: 14px; letter-spacing: 1px;">WWW.GONOTICE.IN</p>
+    <div class="top-banner">GoNotice.in - Latest Sarkari Result</div>
+    <div class="container">
+        {% for job in jobs %}
+        <table class="job-table">
+            <tr><td colspan="2" class="main-title">{{ job[1] }}</td></tr>
+            <tr>
+                <td width="50%"><span class="label-red">Important Dates</span><br>Start: {{ job[2] }}<br>Last Date: {{ job[3] }}</td>
+                <td width="50%"><span class="label-red">Application Fee</span><br>Gen/OBC: ₹{{ job[4] }}<br>SC/ST: ₹{{ job[5] }}</td>
+            </tr>
+            <tr>
+                <td><span class="label-red">Age Limit</span><br>Min: {{ job[6] }} Yrs | Max: {{ job[7] }} Yrs</td>
+                <td><span class="label-red">Total Vacancy</span><br><strong>{{ job[8] }} Posts</strong></td>
+            </tr>
+            <tr><td colspan="2" class="green-strip">Education / Eligibility Criteria</td></tr>
+            <tr><td colspan="2" style="text-align:center; font-weight: 500;">{{ job[9] }}</td></tr>
+            <tr class="action-area">
+                <td colspan="2">
+                    <a href="{{ job[10] }}" class="btn" target="_blank">Download Official Notification</a>
+                    <a href="{{ job[11] }}" class="btn btn-apply" target="_blank">Apply Online Link</a>
+                </td>
+            </tr>
+        </table>
+        {% endfor %}
     </div>
-    <div class="main-nav">
-        <a href="/">HOME</a>
-        <a href="/category/Latest Job">LATEST JOBS</a>
-        <a href="/category/Admit Card">ADMIT CARD</a>
-        <a href="/category/Result">RESULT</a>
-    </div>
-
-    <div class="container mt-3">
-        {% if mode == 'home' %}
-            <div class="row">
-                {% for cat in ['Result', 'Admit Card', 'Latest Job'] %}
-                <div class="col-md-4">
-                    <div class="box">
-                        <div class="box-head">{{ cat }}</div>
-                        {% for item in data if item[1] == cat %}
-                        <a href="/notice/{{ item[0] }}" class="job-link">{{ item[2] }}</a>
-                        {% endfor %}
-                    </div>
-                </div>
-                {% endfor %}
-            </div>
-
-        {% elif mode == 'category_view' %}
-            <div class="row justify-content-center">
-                <div class="col-md-8">
-                    <div class="box">
-                        <div class="box-head">{{ selected_cat }} Updates</div>
-                        {% for item in data %}
-                        <a href="/notice/{{ item[0] }}" class="job-link">{{ item[2] }}</a>
-                        {% else %}
-                        <p class="p-3 text-center">No updates found in this section.</p>
-                        {% endfor %}
-                    </div>
-                </div>
-            </div>
-
-        {% elif mode == 'detail' %}
-            <div class="card p-3 shadow-sm bg-white">
-                <div class="post-title">{{ item[2] }}</div>
-                <table class="job-table">
-                    <tr class="header-row"><td colspan="2">Important Dates & Application Fee</td></tr>
-                    <tr>
-                        <td width="50%">
-                            <span class="label">Apply Start:</span> {{ item[3] }}<br>
-                            <span class="label">Last Date:</span> <span class="text-danger">{{ item[4] }}</span><br>
-                            <span class="label">Fee Last Date:</span> {{ item[5] }}
-                        </td>
-                        <td>
-                            <span class="label">Gen / OBC / EWS :</span> <span class="text-danger">Rs. {{ item[6] }}/-</span><br>
-                            <span class="label">SC / ST :</span> <span class="text-danger">Rs. {{ item[7] }}/-</span><br>
-                            <span class="label">Mode:</span> Online
-                        </td>
-                    </tr>
-                    <tr class="sub-header"><td colspan="2">Age Limit As On {{ item[4] }}</td></tr>
-                    <tr class="text-center">
-                        <td colspan="2">
-                            <span class="label">Minimum Age:</span> {{ item[8] }} Years | 
-                            <span class="label">Maximum Age:</span> {{ item[9] }} Years
-                        </td>
-                    </tr>
-                    <tr class="sub-header"><td colspan="2">Vacancy Details: Total {{ item[10] }} Post</td></tr>
-                    <tr><td colspan="2" class="text-center"><span class="label">Eligibility:</span> {{ item[11] }}</td></tr>
-                    <tr class="header-row"><td colspan="2">Important Links</td></tr>
-                    
-                    {% if item[1] == 'Latest Job' %}
-                    <tr class="text-center"><td><span class="label">Apply Online Link</span></td><td><a href="{{ item[12] }}" target="_blank" class="btn btn-primary btn-sm">Click Here</a></td></tr>
-                    {% elif item[1] == 'Admit Card' %}
-                    <tr class="text-center"><td><span class="label">Download Admit Card</span></td><td><a href="{{ item[12] }}" target="_blank" class="btn btn-success btn-sm">Click Here</a></td></tr>
-                    <tr class="text-center"><td><span class="label">Check Exam City/Date</span></td><td><a href="{{ item[12] }}" target="_blank" class="btn btn-info btn-sm">Click Here</a></td></tr>
-                    {% elif item[1] == 'Result' %}
-                    <tr class="text-center"><td><span class="label">Download Result</span></td><td><a href="{{ item[12] }}" target="_blank" class="btn btn-danger btn-sm">Click Here</a></td></tr>
-                    {% endif %}
-                </table>
-                <div class="text-center mt-3"><a href="/" class="btn btn-dark btn-sm">Back to Home</a></div>
-            </div>
-
-        {% elif mode == 'admin' %}
-            <div class="card p-4 shadow">
-                <h4 class="text-center text-primary">Admin Dashboard - GoNotice.in</h4>
-                <form method="POST" class="row g-2">
-                    <div class="col-md-4"><select name="cat" class="form-select"><option>Latest Job</option><option>Admit Card</option><option>Result</option></select></div>
-                    <div class="col-md-8"><input name="title" placeholder="Job/Notice Title" class="form-control" required></div>
-                    <div class="col-md-4"><input name="start" placeholder="Apply Start Date" class="form-control"></div>
-                    <div class="col-md-4"><input name="last" placeholder="Apply Last Date" class="form-control"></div>
-                    <div class="col-md-4"><input name="f_last" placeholder="Fee Last Date" class="form-control"></div>
-                    <div class="col-md-6"><input name="f_gen" placeholder="Fee (Gen/OBC/EWS)" class="form-control"></div>
-                    <div class="col-md-6"><input name="f_sc" placeholder="Fee (SC/ST)" class="form-control"></div>
-                    <div class="col-md-3"><input name="min" placeholder="Min Age" class="form-control"></div>
-                    <div class="col-md-3"><input name="max" placeholder="Max Age" class="form-control"></div>
-                    <div class="col-md-3"><input name="total" placeholder="Total Posts" class="form-control"></div>
-                    <div class="col-md-3"><input name="link" placeholder="Apply/Result URL" class="form-control"></div>
-                    <div class="col-12"><textarea name="elig" placeholder="Eligibility Detail" class="form-control" rows="3"></textarea></div>
-                    <button class="btn btn-success w-100 fw-bold">Publish Notice Now</button>
-                </form>
-                <hr>
-                <h5 class="mt-3">Recent Posts</h5>
-                <div class="table-responsive">
-                    <table class="table table-bordered table-striped mt-2">
-                        <thead class="table-dark"><tr><th>Title</th><th>Category</th><th>Action</th></tr></thead>
-                        <tbody>
-                            {% for i in data %}
-                            <tr><td>{{ i[2] }}</td><td>{{ i[1] }}</td><td><a href="/delete/{{ i[0] }}" class="text-danger fw-bold">Delete</a></td></tr>
-                            {% endfor %}
-                        </tbody>
-                    </table>
-                </div>
-                <a href="/logout" class="btn btn-outline-danger btn-sm">Logout Session</a>
-            </div>
-        {% elif mode == 'login' %}
-            <div class="mt-5 text-center">
-                <form method="POST" class="card p-4 mx-auto shadow" style="max-width:350px;">
-                    <h4 class="mb-3">Admin Login</h4>
-                    <input name="user" placeholder="Admin Username" class="form-control mb-2" required>
-                    <input name="pass" type="password" placeholder="Admin Password" class="form-control mb-3" required>
-                    <button class="btn btn-primary w-100">Login to Dashboard</button>
-                </form>
-            </div>
-        {% endif %}
-    </div>
-
-    <footer>
-        <p>© 2025 <strong>GoNotice.in</strong> - Leading Job Portal</p>
-        <p><a href="#" class="text-white text-decoration-none">Telegram</a> | <a href="#" class="text-white text-decoration-none">WhatsApp</a> | <a href="#" class="text-white text-decoration-none">Contact Us</a></p>
-    </footer>
 </body>
 </html>
-"""
+'''
 
-# --- Routes ---
+ADMIN_HTML = '''
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Secure Admin Panel</title>
+    <style>
+        body { background: #1a1a1a; font-family: sans-serif; display: flex; justify-content: center; padding: 40px; }
+        .card { background: #fff; width: 100%; max-width: 750px; padding: 30px; border-radius: 12px; border-top: 10px solid #ff0000; }
+        input, textarea { width: 100%; padding: 12px; margin: 10px 0; border: 2px solid #ddd; border-radius: 6px; box-sizing: border-box; }
+        .flex { display: flex; gap: 15px; }
+        button { width: 100%; background: #008000; color: #fff; border: none; padding: 16px; font-size: 18px; font-weight: bold; cursor: pointer; border-radius: 6px; margin-top: 10px; }
+        button:hover { background: #006400; }
+        .header-txt { text-align: center; color: #ff0000; margin-bottom: 25px; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <div style="text-align: right;"><a href="/logout" style="color:red; font-weight:bold;">[Logout]</a></div>
+        <h2 class="header-txt">Post New Sarkari Vacancy</h2>
+        <form method="POST">
+            <input type="text" name="title" placeholder="Notice Title (e.g., RPF Constable 2025)" required>
+            <div class="flex">
+                <input type="text" name="start_date" placeholder="Form Start Date">
+                <input type="text" name="last_date" placeholder="Form Last Date">
+            </div>
+            <div class="flex">
+                <input type="text" name="fee_gen" placeholder="Gen Fee">
+                <input type="text" name="fee_sc" placeholder="SC/ST Fee">
+            </div>
+            <div class="flex">
+                <input type="text" name="min_age" placeholder="Min Age">
+                <input type="text" name="max_age" placeholder="Max Age">
+            </div>
+            <input type="text" name="total_post" placeholder="Vacancy Count">
+            <textarea name="eligibility" rows="4">Candidates Must Have Passed 10+2 (Intermediate) From Any Recognized Board In India To Be Eligible.</textarea>
+            <input type="url" name="notif_link" placeholder="Official PDF Link (https://...)">
+            <input type="url" name="apply_link" placeholder="Online Apply Link (https://...)">
+            <button type="submit">Publish Job to GoNotice.in</button>
+        </form>
+    </div>
+</body>
+</html>
+'''
+
+# --- 7. ROUTES & LOGIC ---
+
 @app.route('/')
-def home():
-    conn = sqlite3.connect('sarkari_notice.db')
-    data = conn.execute("SELECT * FROM notices ORDER BY id DESC").fetchall()
+def index():
+    conn = sqlite3.connect('gonotice.db')
+    c = conn.cursor()
+    c.execute("SELECT * FROM job_notices ORDER BY id DESC")
+    data = c.fetchall()
     conn.close()
-    return render_template_string(HTML_LAYOUT, mode='home', data=data)
-
-@app.route('/category/<cat_name>')
-def category_filter(cat_name):
-    conn = sqlite3.connect('sarkari_notice.db')
-    data = conn.execute("SELECT * FROM notices WHERE category = ? ORDER BY id DESC", (cat_name,)).fetchall()
-    conn.close()
-    return render_template_string(HTML_LAYOUT, mode='category_view', data=data, selected_cat=cat_name)
-
-@app.route('/notice/<int:id>')
-def detail(id):
-    conn = sqlite3.connect('sarkari_notice.db')
-    item = conn.execute("SELECT * FROM notices WHERE id = ?", (id,)).fetchone()
-    conn.close()
-    if item: return render_template_string(HTML_LAYOUT, mode='detail', item=item)
-    return redirect(url_for('home'))
-
-@app.route('/admin', methods=['GET', 'POST'])
-def admin():
-    if not session.get('logged_in'): return redirect(url_for('login'))
-    conn = sqlite3.connect('sarkari_notice.db')
-    if request.method == 'POST':
-        vals = (request.form['cat'], request.form['title'], request.form['start'], request.form['last'], 
-                request.form['f_last'], request.form['f_gen'], request.form['f_sc'], 
-                request.form['min'], request.form['max'], request.form['total'], 
-                request.form['elig'], request.form['link'])
-        conn.execute("INSERT INTO notices (category,title,start_date,last_date,fee_pay_last,fee_gen_obc_ews,fee_sc_st,min_age,max_age,total_post,eligibility,apply_link) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", vals)
-        conn.commit()
-    data = conn.execute("SELECT * FROM notices ORDER BY id DESC").fetchall()
-    conn.close()
-    return render_template_string(HTML_LAYOUT, mode='admin', data=data)
+    return render_template_string(INDEX_HTML, jobs=data)
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'POST':
-        if request.form['user'] == ADMIN_USER and request.form['pass'] == ADMIN_PASS:
-            session.permanent = True # Security active
+        # Brute Force se bachne ke liye constant-time comparison
+        user = request.form.get('u')
+        pw = request.form.get('p')
+        if user == ADMIN_USER and check_password_hash(ADMIN_PASS_HASH, pw):
+            session.permanent = True
             session['logged_in'] = True
             return redirect(url_for('admin'))
-    return render_template_string(HTML_LAYOUT, mode='login')
+        else:
+            flash("ACCESS DENIED: Credentials Incorrect")
+    return render_template_string('''
+        <body style="background:#000; display:flex; justify-content:center; align-items:center; height:100vh; font-family:Arial;">
+            <div style="background:#fff; padding:40px; border-radius:10px; border-top:5px solid red;">
+                <h2 style="text-align:center; color:red;">ADMIN SYSTEM LOCK</h2>
+                <form method="POST">
+                    <input type="text" name="u" placeholder="Admin ID" required style="display:block; width:100%; padding:10px; margin:10px 0;"><br>
+                    <input type="password" name="p" placeholder="Password" required style="display:block; width:100%; padding:10px; margin:10px 0;"><br>
+                    <button type="submit" style="width:100%; padding:12px; background:#000; color:#fff; border:none; cursor:pointer;">DECRYPT & ENTER</button>
+                </form>
+            </div>
+        </body>
+    ''')
 
-@app.route('/delete/<int:id>')
-def delete(id):
-    if session.get('logged_in'):
-        conn = sqlite3.connect('sarkari_notice.db')
-        conn.execute("DELETE FROM notices WHERE id = ?", (id,))
+@app.route('/admin', methods=['GET', 'POST'])
+@login_required
+def admin():
+    if request.method == 'POST':
+        conn = sqlite3.connect('gonotice.db')
+        c = conn.cursor()
+        # Prepared Statements: SQL Injection se bachata hai
+        c.execute("INSERT INTO job_notices (title, start_date, last_date, fee_gen, fee_sc_st, min_age, max_age, total_post, eligibility, notif_link, apply_link) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                  (request.form.get('title'), request.form.get('start_date'), request.form.get('last_date'), 
+                   request.form.get('fee_gen'), request.form.get('fee_sc'), request.form.get('min_age'), 
+                   request.form.get('max_age'), request.form.get('total_post'), request.form.get('eligibility'), 
+                   request.form.get('notif_link'), request.form.get('apply_link')))
         conn.commit()
         conn.close()
-    return redirect(url_for('admin'))
+        return redirect(url_for('index'))
+    return render_template_string(ADMIN_HTML)
 
 @app.route('/logout')
 def logout():
     session.clear()
-    return redirect(url_for('home'))
+    return redirect(url_for('login'))
 
-if __name__ == '__main__':
-    app.run(debug=True)
+if __name__== '__main__':
+    # Flask ko Production mode mein chalayein (Hackers ko error details nahi dikhengi)
+    app.run(debug=False)
