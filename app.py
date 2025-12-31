@@ -131,15 +131,32 @@ HTML_LAYOUT = """
                             <span class="label">Maximum Age:</span> {{ item[9] }} Years
                         </td>
                     </tr>
-                    <tr class="sub-header"><td colspan="2">Vacancy Details: Total {{ item[10] }} Post</td></tr>
-                    <tr><td colspan="2" class="text-center"><span class="label">Eligibility:</span> {{ item[11] }}</td></tr>
-                    <tr class="header-row"><td colspan="2">Important Links</td></tr>
                     
+                    <tr class="header-row"><td colspan="2">Vacancy Details & Eligibility</td></tr>
+                    <tr class="sub-header">
+                        <td width="30%">Post Name & Total Post</td>
+                        <td width="70%">Eligibility Details</td>
+                    </tr>
+                    <tr>
+                        <td class="text-center align-middle" style="background: #f9f9f9;">
+                            <span class="label" style="font-size: 16px;">Total: {{ item[10] }} Posts</span>
+                        </td>
+                        <td>
+                            <ul style="text-align: left; margin: 0; padding-left: 20px; font-size: 14px;">
+                                {% for line in item[11].split('\n') %}
+                                    {% if line.strip() %}
+                                        <li style="margin-bottom: 5px;">{{ line.strip() }}</li>
+                                    {% endif %}
+                                {% endfor %}
+                            </ul>
+                        </td>
+                    </tr>
+
+                    <tr class="header-row"><td colspan="2">Important Links</td></tr>
                     {% if item[1] == 'Latest Job' %}
                     <tr class="text-center"><td><span class="label">Apply Online Link</span></td><td><a href="{{ item[12] }}" target="_blank" class="btn btn-primary btn-sm">Click Here</a></td></tr>
                     {% elif item[1] == 'Admit Card' %}
                     <tr class="text-center"><td><span class="label">Download Admit Card</span></td><td><a href="{{ item[12] }}" target="_blank" class="btn btn-success btn-sm">Click Here</a></td></tr>
-                    <tr class="text-center"><td><span class="label">Check Exam City/Date</span></td><td><a href="{{ item[12] }}" target="_blank" class="btn btn-info btn-sm">Click Here</a></td></tr>
                     {% elif item[1] == 'Result' %}
                     <tr class="text-center"><td><span class="label">Download Result</span></td><td><a href="{{ item[12] }}" target="_blank" class="btn btn-danger btn-sm">Click Here</a></td></tr>
                     {% endif %}
@@ -262,3 +279,4 @@ def logout():
 
 if __name__ == '__main__':
     app.run(debug=True)
+
