@@ -11,7 +11,7 @@ app = Flask(__name__)
 # --- 1. CORE SECURITY TAGS ---
 # Cryptographically strong keys for session protection
 app.secret_key = secrets.token_hex(32)
-app.permanent_session_lifetime = timedelta(minutes=5)
+app.permanent_session_lifetime = timedelta(minutes=30)
 
 # Secure Admin Credentials
 ADMIN_USER = "UJJWALYADAV"
@@ -212,4 +212,3 @@ def logout():
 if __name__ == '__main__':
     # Running in production mode to avoid revealing server info
     app.run(debug=False)
-    
